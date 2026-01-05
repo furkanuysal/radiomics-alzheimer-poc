@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Data (MR images, masks)
+data/raw/
+data/masks/
+data/processed/
+
+# Outputs
+outputs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
