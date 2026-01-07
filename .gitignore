@@ -2,6 +2,7 @@
 .venv/
 
 # Data (MR images, masks)
+data/*
 data/raw/
 data/masks/
 data/processed/

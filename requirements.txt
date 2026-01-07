@@ -2,6 +2,7 @@ numpy<2.0
 SimpleITK==2.5.3
 pyradiomics==3.0.1
 pandas
+openpyxl
 scikit-learn
 matplotlib
 nibabel
