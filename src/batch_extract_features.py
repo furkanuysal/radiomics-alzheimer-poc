@@ -1,29 +1,44 @@
 import os
+import sys
 import pandas as pd
 import SimpleITK as sitk
 from radiomics import featureextractor
-from dataset_loader import build_dataset_index
+from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
 
-OUTPUT_PATH = "outputs/features/feature_matrix.csv"
+# importing dataset_loader module
+# (Direct import works because they are in the same folder)
+try:
+    from dataset_loader import build_dataset_index
+except ImportError:
+    # Precaution in case of python path issues
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from dataset_loader import build_dataset_index
 
+# Location where the output file will be saved (outputs folder in project root)
+OUTPUT_PATH = os.path.join("outputs", "features", "feature_matrix.csv")
 
 def create_extractor():
     settings = {
-        "resampledPixelSpacing": [1, 1, 1],
+        # [1,1,1] is safe because OASIS-1 is standardized (T88).
+        # [2,2,2] can be done for speed, but T88 might already be low resolution.
+        "resampledPixelSpacing": [1, 1, 1], 
         "interpolator": sitk.sitkBSpline,
         "binWidth": 25,
-        "normalize": True,
-        "normalizeScale": 100
+        "normalize": True,       
+        "normalizeScale": 100,   
+        "voxelArrayShift": 300   
     }
 
     extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
 
-    # Enable image types
     extractor.disableAllImageTypes()
-    for image_type in ["Original", "Wavelet"]:
+    
+    # Enabling Wavelet (Very important for texture analysis)
+    # If it's too slow, you can remove "Wavelet" from the list.
+    for image_type in ["Original", "Wavelet"]: 
         extractor.enableImageTypeByName(image_type)
 
-    # Enable feature classes
     extractor.disableAllFeatures()
     feature_classes = [
         "firstorder", "shape", "glcm", 
@@ -34,63 +49,89 @@ def create_extractor():
 
     return extractor
 
-
-
 def create_simple_mask(image):
-    # Simple full-volume mask (for now)
+    # Since images are already "masked_gfc" (skull-stripped)
+    # simple threshold is enough to remove the background (black).
     mask = sitk.OtsuThreshold(image, 0, 1, 200)
+    
+    if sitk.GetArrayFromImage(mask).sum() == 0:
+        mask = sitk.OtsuThreshold(image, 1, 0, 200)
+
     return mask
 
-
-def main():
-    print("Loading dataset index...")
-    dataset, _, _, _ = build_dataset_index()
-
-    print(f"Total subjects to process: {len(dataset)}")
-
-    extractor = create_extractor()
-
-    rows = []
-
-    for i, item in enumerate(dataset):
+def process_single_subject(item):
+    """Function processing a single patient (For Multiprocessing)"""
+    try:
         subj_id = item["id"]
         image_path = item["image_path"]
         cdr = item["cdr"]
 
-        if pd.isna(cdr):
-            print(f"[SKIP] {subj_id} has no CDR label.")
-            continue
+        # Extractor must be recreated within each process
+        extractor = create_extractor()
 
-        print(f"[{i+1}/{len(dataset)}] Processing {subj_id}")
+        # Read the image
+        image = sitk.ReadImage(image_path)
+        
+        # Create the mask
+        mask = create_simple_mask(image)
 
-        try:
-            image = sitk.ReadImage(image_path)
-            mask = create_simple_mask(image)
+        # Extract features
+        features = extractor.execute(image, mask)
 
-            features = extractor.execute(image, mask)
+        # Result dictionary
+        feature_row = {
+            "id": subj_id,
+            "cdr": cdr,
+            "mmse": item.get("mmse") # Get MMSE if available
+        }
 
-            feature_row = {
-                "id": subj_id,
-                "cdr": cdr
-            }
+        # Take only numerical features, skip diagnostic (metadata) ones
+        for k, v in features.items():
+            if not k.startswith("diagnostics_"):
+                feature_row[k] = v
+                
+        return feature_row
 
-            for k, v in features.items():
-                if k.startswith("original"):
-                    feature_row[k] = v
+    except Exception as e:
+        # If an error occurs, print to screen but do not stop the process
+        print(f"\n[ERROR] {item['id']}: {e}")
+        return None
 
-            rows.append(feature_row)
+def main():
+    print("Scanning dataset...")
+    dataset, _, _, _ = build_dataset_index()
+    
+    print(f"Total number of patients to process: {len(dataset)}")
+    print(f"Processing starting (Multiprocessing)...")
+    print("-" * 50)
 
-        except Exception as e:
-            print(f"[ERROR] {subj_id}: {e}")
+    rows = []
+    
+    # Perform parallel processing using cores on your computer
+    with ProcessPoolExecutor() as executor:
+        # tqdm adds a progress bar
+        results = list(tqdm(executor.map(process_single_subject, dataset), total=len(dataset)))
 
+    # Clean up failed ones (those returning None)
+    rows = [r for r in results if r is not None]
+
+    if not rows:
+        print("ERROR: No features extracted!")
+        return
+
+    # Create DataFrame
     df = pd.DataFrame(rows)
-
+    
+    # Save
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     df.to_csv(OUTPUT_PATH, index=False)
 
-    print(f"\nFeature matrix saved to: {OUTPUT_PATH}")
-    print(f"Final shape: {df.shape}")
-
+    print("-" * 50)
+    print(f"Process Completed! ✅")
+    print(f"Successful: {len(df)} / {len(dataset)}")
+    print(f"File saved: {OUTPUT_PATH}")
+    print(f"Matrix Size: {df.shape}") # (39, ~1000+)
 
 if __name__ == "__main__":
+    # This block is mandatory for multiprocessing on Windows
     main()

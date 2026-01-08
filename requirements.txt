@@ -6,3 +6,5 @@ openpyxl
 scikit-learn
 matplotlib
 nibabel
+tqdm
+seaborn

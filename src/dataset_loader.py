@@ -1,15 +1,18 @@
 import os
-import re
 import pandas as pd
 
-DATA_ROOT = "data/raw/disc1"
-CLINICAL_PATH = "data/clinical/oasis_cross-sectional.xlsx"  # .csv ise burada .csv yaz
+DATA_ROOTS = [
+    "data/raw/disc1",
+    "data/raw/disc2",
+    "data/raw/disc3",
+    "data/raw/disc4",
+    "data/raw/disc5"
+]
+
+CLINICAL_PATH = "data/clinical/oasis_cross-sectional.xlsx"
+
 
 def load_clinical_data(path: str) -> pd.DataFrame:
-    """
-    Loads OASIS clinical data from either .csv or .xlsx and normalizes column names.
-    Returns a DataFrame with at least: ID, CDR, MMSE (if available).
-    """
     ext = os.path.splitext(path)[1].lower()
 
     if ext == ".csv":
@@ -19,14 +22,11 @@ def load_clinical_data(path: str) -> pd.DataFrame:
     else:
         raise ValueError(f"Unsupported clinical file type: {ext}")
 
-    # Normalize column names: strip spaces, unify
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Some files use different labels; map common variants
     col_map = {}
     for c in df.columns:
         c_norm = c.strip().lower()
-
         if c_norm in ("id", "subject", "subject_id", "subject id"):
             col_map[c] = "ID"
         elif c_norm in ("cdr", "clinical dementia rating"):
@@ -39,69 +39,72 @@ def load_clinical_data(path: str) -> pd.DataFrame:
     if "ID" not in df.columns:
         raise ValueError(f"'ID' column not found. Available columns: {list(df.columns)}")
 
-    # Ensure ID formatting matches folder naming: OAS1_0001_MR1
     df["ID"] = df["ID"].astype(str).str.strip()
-
     return df
 
 
 def get_subject_id_from_folder(folder_name: str) -> str:
-    # Folder already looks like OAS1_0001_MR1
     return folder_name.strip()
 
 
-def choose_image_path(raw_dir: str) -> str | None:
-    """
-    Pick one image per subject. Prefer mpr-1 .hdr.
-    """
-    hdrs = [f for f in os.listdir(raw_dir) if f.lower().endswith(".hdr")]
-    if not hdrs:
+def find_processed_image(subject_dir: str) -> str | None:
+    processed_dir = os.path.join(subject_dir, "PROCESSED")
+
+    if not os.path.isdir(processed_dir):
         return None
 
-    # Prefer mpr-1 if present
-    mpr1 = [h for h in hdrs if re.search(r"mpr-1_.*\.hdr$", h, re.IGNORECASE)]
-    chosen = mpr1[0] if mpr1 else sorted(hdrs)[0]
-    return os.path.join(raw_dir, chosen)
+    for root, dirs, files in os.walk(processed_dir):
+        for file in files:
+            if file.endswith("masked_gfc.img"):
+                return os.path.join(root, file)
+
+    return None
 
 
 def get_mri_subjects():
     subjects = []
-    for subject_folder in os.listdir(DATA_ROOT):
-        subject_path = os.path.join(DATA_ROOT, subject_folder)
-        if not os.path.isdir(subject_path):
+
+    for data_root in DATA_ROOTS:
+        if not os.path.exists(data_root):
+            print(f"WARNING: {data_root} folder not found!")
             continue
 
-        raw_dir = os.path.join(subject_path, "RAW")
-        if not os.path.isdir(raw_dir):
-            continue
+        for subject_folder in os.listdir(data_root):
+            subject_path = os.path.join(data_root, subject_folder)
 
-        image_path = choose_image_path(raw_dir)
-        if not image_path:
-            continue
+            if not os.path.isdir(subject_path):
+                continue
 
-        subjects.append({
-            "id": get_subject_id_from_folder(subject_folder),
-            "image_path": image_path
-        })
+            image_path = find_processed_image(subject_path)
+
+            if not image_path:
+                continue
+
+            subjects.append({
+                "id": get_subject_id_from_folder(subject_folder),
+                "image_path": image_path
+            })
 
     return subjects
 
 
 def build_dataset_index():
+    print("Loading clinical data...")
     clinical_df = load_clinical_data(CLINICAL_PATH)
+
+    print("Scanning MRI directories for 'masked_gfc' images...")
     mri_subjects = get_mri_subjects()
 
-    # Index clinical rows by ID for fast lookup
     clinical_index = clinical_df.set_index("ID", drop=False)
 
     dataset = []
-    missing = 0
+    missing_clinical = 0
 
     for subj in mri_subjects:
         sid = subj["id"]
 
         if sid not in clinical_index.index:
-            missing += 1
+            missing_clinical += 1
             continue
 
         row = clinical_index.loc[sid]
@@ -113,15 +116,19 @@ def build_dataset_index():
             "mmse": row["MMSE"] if "MMSE" in clinical_index.columns else None
         })
 
-    return dataset, len(mri_subjects), missing, list(clinical_df.columns)
+    return dataset, len(mri_subjects), missing_clinical, list(clinical_df.columns)
 
 
 if __name__ == "__main__":
     data, n_mri, missing, cols = build_dataset_index()
     print(f"Clinical columns: {cols}")
-    print(f"Found MRI subjects in disc1: {n_mri}")
-    print(f"Matched subjects: {len(data)}")
+    print(f"Found MRI subjects (with masked images): {n_mri}")
+    print(f"Matched subjects (MRI + Clinical): {len(data)}")
     print(f"Missing in clinical table: {missing}")
-    print("Sample rows:")
-    for item in data[:5]:
-        print(item)
+
+    if len(data) > 0:
+        print("\nSample rows:")
+        for item in data[:3]:
+            print(item)
+    else:
+        print("\nNo matching data found! Check paths.")
