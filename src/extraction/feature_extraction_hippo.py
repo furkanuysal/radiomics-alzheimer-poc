@@ -10,10 +10,16 @@ from tqdm import tqdm
 try:
     from dataset_loader import build_dataset_index
 except ImportError:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    current_file_path = os.path.abspath(__file__)
+    extraction_dir = os.path.dirname(current_file_path)
+    src_dir = os.path.dirname(extraction_dir)
+    utils_dir = os.path.join(src_dir, "utils")
+
+    if utils_dir not in sys.path:
+        sys.path.append(utils_dir)
     from dataset_loader import build_dataset_index
 
-OUTPUT_PATH = "outputs/features/feature_matrix_hippo.csv"
+OUTPUT_PATH = "outputs/features/hippocampus/feature_matrix_hippo.csv"
 
 # --- UPDATED "TIGHT" COORDINATES (T88 Atlas) ---
 
