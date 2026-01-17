@@ -113,7 +113,12 @@ def process_single_subject(item, box_coords):
         extractor = create_extractor()
         features = extractor.execute(image, mask, label=1)
 
-        feature_row = {"id": subj_id, "cdr": item["cdr"]}
+        feature_row = {
+            "id": subj_id,
+            "cdr": item["cdr"],
+            "mmse": item.get("mmse", np.nan)
+        }
+
         for k, v in features.items():
             if not k.startswith("diagnostics_"):
                 feature_row[k] = v
