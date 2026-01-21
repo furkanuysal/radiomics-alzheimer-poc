@@ -8,3 +8,6 @@ matplotlib
 nibabel
 tqdm
 seaborn
+python-multipart
+fastapi
+uvicorn
