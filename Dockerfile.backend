@@ -1,0 +1,24 @@
+FROM python:3.10-slim
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir "numpy<2.0"
+RUN pip install --no-cache-dir SimpleITK==2.5.3
+RUN pip install --no-cache-dir --no-build-isolation pyradiomics==3.0.1
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src ./src
+COPY outputs ./outputs
+
+EXPOSE 8000
+
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
